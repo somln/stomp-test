@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>WebSocket Client</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://code.jquery.com/jquery-2.2.4.min.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@stomp/stompjs@7.0.0/bundles/stomp.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.4.0/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.js"></script>
+    <style>
+        body {
+            background-color: #f8f9fa;
+            color: #212529;
+        }
+        .container {
+            max-width: 800px;
+            padding: 2rem;
+        }
+        .card {
+            border: none;
+            border-radius: 10px;
+            box-shadow: 0 2px 15px rgba(0,0,0,0.1);
+            margin-bottom: 2rem;
+        }
+        .card-header {
+            background-color: #fff;
+            border-bottom: 1px solid #eee;
+            padding: 1rem 1.5rem;
+        }
+        .card-body {
+            padding: 1.5rem;
+        }
+        .btn {
+            border-radius: 6px;
+            padding: 0.5rem 1rem;
+            font-weight: 500;
+        }
+        .btn-primary {
+            background-color: #4263eb;
+            border-color: #4263eb;
+        }
+        .btn-primary:hover {
+            background-color: #364fc7;
+            border-color: #364fc7;
+        }
+        .btn-danger {
+            background-color: #fa5252;
+            border-color: #fa5252;
+        }
+        .btn-danger:hover {
+            background-color: #e03131;
+            border-color: #e03131;
+        }
+        .form-control {
+            border-radius: 6px;
+            border: 1px solid #dee2e6;
+            padding: 0.5rem 0.75rem;
+        }
+        .form-control:focus {
+            border-color: #4263eb;
+            box-shadow: 0 0 0 0.2rem rgba(66,99,235,0.25);
+        }
+        #messageBox {
+            background: white;
+            border-radius: 10px;
+            box-shadow: inset 0 0 10px rgba(0,0,0,0.1);
+        }
+        .alert {
+            border-radius: 6px;
+            margin-bottom: 0.5rem;
+        }
+        .header-item, .subscription-form {
+            margin-bottom: 1rem !important;
+        }
+    </style>
+    <script type="text/javascript">
+        let stompClient;
+        let subscriptions = {};
+        let isConnected = false;
+
+        function connectWebSocket() {
+            if (isConnected) return;
+
+            const url = $('#websocketUrl').val();
+
+            const headers = {};
+            $('#headerList .header-item').each(function () {
+                const headerKey = $(this).find('.header-key').val();
+                const headerValue = $(this).find('.header-value').val();
+                if (headerKey && headerValue) {
+                    headers[headerKey] = headerValue;
+                }
+            });
+
+            stompClient = Stomp.client(url);
+
+            stompClient.connect(
+                headers,
+                stompConnectHandler,
+                stompErrorHandler
+            );
+        }
+
+        function disconnectWebSocket() {
+            if (!isConnected) return;
+
+            Object.keys(subscriptions).forEach(path => {
+                unsubscribeFromPath(path);
+            });
+
+            stompClient.disconnect(() => {
+                console.log('Disconnected from WebSocket');
+                isConnected = false;
+                $('#connectionStatus').html('<div class="alert alert-warning">WebSocket 연결이 종료되었습니다.</div>');
+                $('#connectBtn').prop('disabled', false);
+                $('#disconnectBtn').prop('disabled', true);
+                $('#headerList input').prop('disabled', false);
+                $('#addHeaderBtn').prop('disabled', false);
+                
+                $('.subscription-form').each(function() {
+                    const inputField = $(this).find('input');
+                    inputField.prop('disabled', false);
+                    $(this).find('.subscribeBtn').prop('disabled', false).show();
+                    $(this).find('.unsubscribeBtn').hide();
+                });
+            });
+        }
+
+        function stompConnectHandler() {
+            console.log('connected!');
+            isConnected = true;
+            $('#connectionStatus').html('<div class="alert alert-success">WebSocket 연결 성공!</div>');
+            $('#connectBtn').prop('disabled', true);
+            $('#disconnectBtn').prop('disabled', false);
+            $('#headerList input').prop('disabled', true);
+            $('#addHeaderBtn').prop('disabled', true);
+        }
+
+        function stompErrorHandler(e) {
+            console.error('stomp connect error - ', e);
+            $('#connectionStatus').html('<div class="alert alert-danger">WebSocket 연결 실패!</div>');
+            isConnected = false;
+            $('#connectBtn').prop('disabled', false);
+            $('#disconnectBtn').prop('disabled', true);
+            $('#headerList input').prop('disabled', false);
+            $('#addHeaderBtn').prop('disabled', false);
+        }
+
+        function subscribeToPath(path) {
+            const subscription = stompClient.subscribe(
+                path,
+                (data) => {
+                    displayMessage(data.body);
+                }
+            );
+
+            subscriptions[path] = subscription;
+        }
+
+        function unsubscribeFromPath(path) {
+            if (subscriptions[path]) {
+                subscriptions[path].unsubscribe();
+                delete subscriptions[path];
+                console.log(`Unsubscribed from ${path}`);
+            }
+        }
+
+        function displayMessage(messageData) {
+            const messageBox = $('#messageBox');
+            messageBox.append(`<div class="alert alert-info">${messageData}</div>`);
+            messageBox.scrollTop(messageBox[0].scrollHeight);
+        }
+
+        $(function () {
+            $('#connectBtn').click(connectWebSocket);
+            $('#disconnectBtn').click(disconnectWebSocket);
+
+            $('#addHeaderBtn').click(function () {
+                const headerForm = `
+                    <div class="input-group mb-3 header-item">
+                        <input type="text" class="form-control header-key" placeholder="Header Key" />
+                        <input type="text" class="form-control header-value" placeholder="Header Value" />
+                        <button class="btn btn-danger removeHeaderBtn">Remove</button>
+                    </div>`;
+                $('#headerList').append(headerForm);
+            });
+
+            $(document).on('click', '.removeHeaderBtn', function () {
+                $(this).parent().remove();
+            });
+
+            $('#addSubscriptionBtn').click(function () {
+                const subscriptionCount = $('#subscriptionList .subscription-form').length;
+                const subscriptionForm = `
+                    <div class="mb-3 input-group subscription-form" id="subscription-${subscriptionCount}">
+                        <input type="text" class="form-control" placeholder="/sub/chat/room/123" id="path-${subscriptionCount}" />
+                        <button class="btn btn-primary subscribeBtn">Subscribe</button>
+                        <button class="btn btn-danger unsubscribeBtn" style="display: none;">Unsubscribe</button>
+                    </div>`;
+                $('#subscriptionList').append(subscriptionForm);
+            });
+
+            $(document).on('click', '.subscribeBtn', function () {
+                const inputField = $(this).siblings('input');
+                const path = inputField.val();
+                subscribeToPath(path);
+                inputField.prop('disabled', true);
+                $(this).prop('disabled', true).hide();
+                $(this).siblings('.unsubscribeBtn').show();
+            });
+
+            $(document).on('click', '.unsubscribeBtn', function () {
+                const inputField = $(this).siblings('input');
+                const path = inputField.val();
+                unsubscribeFromPath(path);
+                inputField.prop('disabled', false);
+                $(this).siblings('.subscribeBtn').prop('disabled', false).show();
+                $(this).hide();
+            });
+
+            $('#sendBtn').click(function () {
+                const destinationPath = $('#destinationPath').val();
+                const messageJson = $('#message').val();
+
+                try {
+                    const message = JSON.parse(messageJson);
+                    stompClient.send(destinationPath, {}, JSON.stringify(message));
+                } catch (error) {
+                    alert('유효한 JSON을 입력하세요!');
+                }
+            });
+        });
+    </script>
+</head>
+<body>
+    <div class="container">
+        <h1 class="mb-4 text-center">WebSocket Client</h1>
+        
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">Connection</h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <input type="text" id="websocketUrl" class="form-control mb-2" placeholder="ws://localhost:8080/ws-stomp"/>
+                    <div class="d-flex gap-2">
+                        <button id="connectBtn" class="btn btn-primary flex-grow-1">Connect</button>
+                        <button id="disconnectBtn" class="btn btn-danger flex-grow-1" disabled>Disconnect</button>
+                    </div>
+                </div>
+                <div id="connectionStatus"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">Headers</h5>
+                <button id="addHeaderBtn" class="btn btn-secondary btn-sm">Add Header</button>
+            </div>
+            <div class="card-body">
+                <div id="headerList"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">Subscriptions</h5>
+                <button id="addSubscriptionBtn" class="btn btn-secondary btn-sm">Add Subscription</button>
+            </div>
+            <div class="card-body">
+                <div id="subscriptionList"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">Send Message</h5>
+            </div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label for="destinationPath" class="form-label">Destination Path:</label>
+                    <input type="text" id="destinationPath" class="form-control" placeholder="/pub/chat/message"/>
+                </div>
+                <div class="mb-3">
+                    <label for="message" class="form-label">Message (JSON):</label>
+                    <textarea id="message" class="form-control" rows="4" placeholder='{"targetRoomUUID": "", "message": "", "sender": ""}'></textarea>
+                </div>
+                <button id="sendBtn" class="btn btn-success w-100">Send Message</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">Messages</h5>
+            </div>
+            <div class="card-body">
+                <div id="messageBox" class="p-3" style="height: 300px; overflow-y: auto;"></div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
